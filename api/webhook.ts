@@ -23,9 +23,8 @@ export default async function handler(req: IncomingMessage & { method?: string; 
     const rawBody = await readRawBody(req);                // 重要：生ボディ
     const signature = req.headers['stripe-signature'] || '';
 
-    const stripe = new Stripe(process.env.STRIPE_KEY as string, {
-      apiVersion: '2025-08-27.basil',
-    });
+    const stripe = new Stripe(process.env.STRIPE_KEY as string);
+
 
     const event = stripe.webhooks.constructEvent(
       rawBody,
