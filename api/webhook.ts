@@ -25,7 +25,17 @@ export default async function handler(req: IncomingMessage & { method?: string; 
 
     const stripe = new Stripe(process.env.STRIPE_KEY as string);
 
+    console.log(
+  'sig hdr =',
+  (req.headers['stripe-signature'] || '').slice(0, 12),
+  'whsec =',
+  (process.env.STRIPE_WH_SECRET || '').slice(0, 12),
+  'len =',
+  (process.env.STRIPE_WH_SECRET || '').length
+);
 
+    console.log('rawBody length =', rawBody?.length ?? -1);
+    
     const event = stripe.webhooks.constructEvent(
       rawBody,
       signature as string,
