@@ -35,7 +35,7 @@ export default async function handler(req, res) {
   try {
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
-      customer_creation: 'always',
+      
       customer_email: email,
       success_url: 'https://app.ai-zangyo-free.com/welcome?session_id={CHECKOUT_SESSION_ID}',
       cancel_url:  'https://app.ai-zangyo-free.com/paywall',
