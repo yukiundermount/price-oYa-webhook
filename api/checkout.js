@@ -26,19 +26,27 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'email and priceId are required' });
   }
 
-  // apiVersion は省略（アカウント既定を使用）
+  if (!process.env.STRIPE_KEY) {
+    return res.status(500).json({ error: 'STRIPE_KEY is missing in env' });
+  }
+
   const stripe = new Stripe(process.env.STRIPE_KEY);
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer_creation: 'always',
-    customer_email: email,
-    success_url: 'https://app.ai-zangyo-free.com/welcome?session_id={CHECKOUT_SESSION_ID}',
-    cancel_url:  'https://app.ai-zangyo-free.com/paywall',
-    line_items: [{ price: priceId, quantity: 1 }],
-    allow_promotion_codes: true,
-    metadata: { email }
-  });
-
-  return res.json({ url: session.url });
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer_creation: 'always',
+      customer_email: email,
+      success_url: 'https://app.ai-zangyo-free.com/welcome?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url:  'https://app.ai-zangyo-free.com/paywall',
+      line_items: [{ price: priceId, quantity: 1 }],
+      allow_promotion_codes: true,
+      metadata: { email }
+    });
+    return res.json({ url: session.url });
+  } catch (e) {
+    console.error('Stripe error:', e);
+    const msg = (e && e.message) ? e.message : String(e);
+    return res.status(500).json({ error: msg });
+  }
 }
