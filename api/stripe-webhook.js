@@ -4,7 +4,7 @@ import Stripe from 'stripe';
 export const config = { api: { bodyParser: false } };
 
 const stripe = new Stripe(process.env.STRIPE_KEY, { apiVersion: '2023-10-16' });
-const endpointSecret = process.env.STRIPE_WH_SECRET;
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 async function readBuffer(req) {
   const chunks = [];
