@@ -1,32 +1,19 @@
-// /api/stripe-webhook.js
-// 値付けAI「値付けoYa」用 Webhook
+// /api/stripe-webhook  for 「値付けoYa」
+// Vercel Edge Function (Node.js) 用
 
 import Stripe from 'stripe';
 
 export const config = {
-  api: { bodyParser: false },
+  api: { bodyParser: false }, // Stripe の署名検証のため必須
 };
 
-// 環境変数：STRIPE_SECRET_KEY（なければ STRIPE_KEY）を使用
-const stripe = new Stripe(
-  process.env.STRIPE_SECRET_KEY || process.env.STRIPE_KEY,
-  { apiVersion: '2023-10-16' }
-);
+const stripe = new Stripe(process.env.STRIPE_KEY, {
+  apiVersion: '2023-10-16',
+});
 
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-// ★ ここにテスト環境の price ID をマッピング
-const PRICE_TO_PLAN = {
-  'price_1STMO60Y5YzAOfNy6k6TmXJ6': 'starter_monthly',
-  'price_1SObeG0Y5YzAOfNywjZPRhTt': 'starter_yearly',
-  'price_1STMPx0Y5YzAOfNyBiy3shCH': 'business_monthly',
-  'price_1STMPH0Y5YzAOfNytq9OKkyO': 'business_yearly',
-};
-
-function getPlanFromPriceId(priceId) {
-  return PRICE_TO_PLAN[priceId] || 'unknown';
-}
-
+// 生のボディを読み取るヘルパー
 async function readBuffer(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -35,138 +22,129 @@ async function readBuffer(req) {
   return Buffer.concat(chunks);
 }
 
-// Google スプレッドシート Web App へ送信
-async function updateSheet(payload) {
+// Google Apps Script WebApp に転送
+async function sendToSheet(payload) {
   const url = process.env.SHEETS_WEBAPP_URL;
   if (!url) {
-    console.error('SHEETS_WEBAPP_URL is not set');
+    console.error('SHEETS_WEBAPP_URL が設定されていません');
     return;
   }
 
-  await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      // 任意。Apps Script 側でチェックしたい場合用
-      'X-API-Key': process.env.ADMIN_KEY || '',
-    },
-    body: JSON.stringify(payload),
-  });
-}
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': process.env.ADMIN_KEY || '',
+      },
+      body: JSON.stringify(payload),
+    });
 
-// Stripe の Subscription 情報 → スプレッドシート1行ぶんのデータに変換
-async function subscriptionToPayload(subscription, extra = {}) {
-  const customerId = subscription.customer;
-
-  // email をできるだけ取る（checkout.session から渡されたものを優先）
-  let email = extra.email || subscription.customer_email || '';
-
-  if (!email && customerId) {
-    try {
-      const customer = await stripe.customers.retrieve(customerId);
-      if (!customer.deleted) {
-        email = customer.email || '';
-      }
-    } catch (err) {
-      console.error('Failed to fetch customer', err);
-    }
+    const text = await res.text();
+    console.log('Sheets WebApp response:', res.status, text);
+  } catch (err) {
+    console.error('Sheets WebApp への送信でエラー:', err);
   }
-
-  const item = subscription.items?.data?.[0];
-  const price = item?.price;
-  const priceId = typeof price === 'string' ? price : price?.id;
-  const plan = getPlanFromPriceId(priceId);
-
-  const periodStart = subscription.current_period_start
-    ? new Date(subscription.current_period_start * 1000).toISOString()
-    : null;
-
-  const periodEnd = subscription.current_period_end
-    ? new Date(subscription.current_period_end * 1000).toISOString()
-    : null;
-
-  return {
-    // ★ スプレッドシートのヘッダーに合わせる
-    email: email || '',
-    plan,
-    status: subscription.status, // active / canceled など
-    stripe_customer_id: customerId || '',
-    stripe_subscription_id: subscription.id,
-    period_start: periodStart,
-    period_end: periodEnd,
-    updated_at: new Date().toISOString(),
-    // おまけ情報（必要なら Apps Script 側で参照）
-    ...extra,
-  };
 }
 
+// price_id → プラン名
+function planFromPriceId(priceId) {
+  switch (priceId) {
+    case 'price_1STMO60Y5YzAOfNy6k6TmXJ6':
+      return 'starter_monthly';
+    case 'price_1SObeG0Y5YzAOfNywjZPRhTt':
+      return 'starter_yearly';
+    case 'price_1STMPx0Y5YzAOfNyBiy3shCH':
+      return 'business_monthly';
+    case 'price_1STMPH0Y5YzAOfNytq9OKkyO':
+      return 'business_yearly';
+    default:
+      return '';
+  }
+}
+
+// Webhook ハンドラ本体
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).end('Method Not Allowed');
+    return res.status(405).send('Method Not Allowed');
   }
 
   const buf = await readBuffer(req);
-  const sig = req.headers['stripe-signature'] || '';
+  const sig = req.headers['stripe-signature'];
 
   let event;
+
+  // 署名検証
   try {
     event = stripe.webhooks.constructEvent(buf, sig, endpointSecret);
+    console.log('✅ Webhook verified:', event.id, event.type);
   } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
+    console.error('❌ Webhook signature error:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  try {
-    switch (event.type) {
-      // 新規課金完了（Checkout 完了）
-      case 'checkout.session.completed': {
-        const session = event.data.object;
+  const data = event.data.object;
 
-        // サブスク以外は無視
-        if (session.mode !== 'subscription') break;
+  // ここでは checkout.session.completed を主に想定
+  // 他のイベントも一旦そのままシートに流します
+  let email = '';
+  let customerId = '';
+  let subscriptionId = '';
+  let periodStart = '';
+  let periodEnd = '';
+  let priceId = '';
 
-        const subscriptionId = session.subscription;
-        if (!subscriptionId) break;
+  // checkout.session.completed の場合
+  if (event.type === 'checkout.session.completed') {
+    email =
+      data.customer_details?.email ||
+      data.client_reference_id ||
+      data.customer_email ||
+      '';
+    customerId = data.customer || '';
+    subscriptionId = data.subscription || '';
 
-        // Subscription の中に price / status / period などが入っているので取得
-        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-
-        const email =
-          session.customer_details?.email ||
-          session.customer_email ||
-          '';
-
-        const payload = await subscriptionToPayload(subscription, {
-          source: 'checkout.session.completed',
-          // ここに必要なら他の情報も載せられる
-        });
-
-        // email は extra で優先したいので上書き
-        payload.email = email || payload.email;
-
-        await updateSheet(payload);
-        break;
+    // サブスクリプション情報が入っていればそこから期間を拾う（あれば）
+    if (data.subscription && data.subscription.items) {
+      const item = data.subscription.items.data[0];
+      priceId = item.price?.id || '';
+      if (data.subscription.current_period_start) {
+        periodStart = data.subscription.current_period_start;
       }
-
-      // プラン変更・更新・キャンセルなど
-      case 'customer.subscription.updated':
-      case 'customer.subscription.deleted': {
-        const subscription = event.data.object;
-        const payload = await subscriptionToPayload(subscription, {
-          source: event.type,
-        });
-        await updateSheet(payload);
-        break;
+      if (data.subscription.current_period_end) {
+        periodEnd = data.subscription.current_period_end;
       }
-
-      default:
-        // 開発中はログだけ出しておく
-        console.log(`Unhandled event type ${event.type}`);
     }
-
-    res.json({ received: true });
-  } catch (err) {
-    console.error('Error handling webhook event:', err);
-    res.status(500).send('Internal Server Error');
+  } else if (event.type.startsWith('customer.subscription.')) {
+    // customer.subscription.created / updated / deleted など
+    email = ''; // 必要なら別途取得
+    customerId = data.customer || '';
+    subscriptionId = data.id || '';
+    priceId = data.items?.data?.[0]?.price?.id || '';
+    periodStart = data.current_period_start || '';
+    periodEnd = data.current_period_end || '';
   }
+
+  const plan = planFromPriceId(priceId);
+
+  const payloadForSheet = {
+    event_id: event.id,
+    event_type: event.type,
+    email,
+    plan,
+    status: event.type,
+    stripe_customer_id: customerId,
+    stripe_subscription_id: subscriptionId,
+    period_start: periodStart,
+    period_end: periodEnd,
+    updated_at: new Date().toISOString(),
+    price_id: priceId,
+  };
+
+  console.log('➡️ Send payload to sheet:', payloadForSheet);
+
+  await sendToSheet(payloadForSheet);
+
+  return res.json({ received: true });
 }
+
