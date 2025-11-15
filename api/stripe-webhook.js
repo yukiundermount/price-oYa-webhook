@@ -27,23 +27,32 @@ async function readBuffer(req) {
 async function updateSheet(payload) {
   const url = process.env.SHEETS_WEBAPP_URL;
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': process.env.ADMIN_KEY || '',
-    },
-    body: JSON.stringify(payload),
-  });
+  if (!url) {
+    console.error('❌ SHEETS_WEBAPP_URL is not set');
+    return;
+  }
 
-  const text = await res.text();
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': process.env.ADMIN_KEY || '',
+      },
+      body: JSON.stringify(payload),
+    });
 
-  console.log(
-    'Sheets WebApp response:',
-    res.status,
-    res.statusText || '',
-    text.slice(0, 200)
-  );
+    const text = await res.text();
+
+    console.log(
+      'Sheets WebApp response:',
+      res.status,
+      res.statusText || '',
+      text.slice(0, 200)
+    );
+  } catch (err) {
+    console.error('❌ Error while calling Sheets WebApp:', err);
+  }
 }
 
 // Stripe の price ID → プラン情報 対応表（テスト環境の ID）
@@ -89,7 +98,9 @@ export default async function handler(req, res) {
     // Stripe 以外から叩いたとき用のフォールバック（開発・テスト向け）
     try {
       event = JSON.parse(buf.toString('utf8'));
-      console.warn('⚠️ No stripe-signature header. Parsed body as JSON directly (dev only).');
+      console.warn(
+        '⚠️ No stripe-signature header. Parsed body as JSON directly (dev only).'
+      );
     } catch (err) {
       console.error('❌ Failed to parse request body as JSON:', err.message);
       return res.status(400).send('Invalid payload');
@@ -134,7 +145,7 @@ export default async function handler(req, res) {
         break;
       }
 
-      // サブスク更新系（任意で）
+      // サブスク更新系
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
         const subscription = event.data.object;
@@ -164,7 +175,10 @@ export default async function handler(req, res) {
           updated_at: new Date().toISOString(),
         };
 
-        console.log('➡️ Send payload to sheet (subscription update):', payloadForSheet);
+        console.log(
+          '➡️ Send payload to sheet (subscription update):',
+          payloadForSheet
+        );
         await updateSheet(payloadForSheet);
         break;
       }
@@ -179,3 +193,4 @@ export default async function handler(req, res) {
     res.status(500).send('Webhook handler error');
   }
 }
+
