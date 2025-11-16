@@ -58,16 +58,16 @@ async function updateSheet(payload) {
 // Stripe の price ID → プラン情報 対応表（テスト環境の ID）
 const PRICE_TO_PLAN = {
   // Starter 月額
-  price_1STMO60Y5YzAOfNy6k6TmXJ6: { plan: 'starter', billing: 'monthly' },
+  price_1SNX0J0Y5YzAOfNy4TnmH1gA: { plan: 'starter', billing: 'monthly' },
 
   // Starter 年額
-  price_1SObeG0Y5YzAOfNywjZPRhTt: { plan: 'starter', billing: 'yearly' },
+  price_1SNX0J0Y5YzAOfNy3IIPnWo0: { plan: 'starter', billing: 'yearly' },
 
   // Business 月額
-  price_1STMPx0Y5YzAOfNyBiy3shCH: { plan: 'business', billing: 'monthly' },
+  price_1SNX0I0Y5YzAOfNyUcCP6cmf: { plan: 'business', billing: 'monthly' },
 
   // Business 年額
-  price_1STMPH0Y5YzAOfNytq9OKkyO: { plan: 'business', billing: 'yearly' },
+  price_1SNX0I0Y5YzAOfNyWHAs66fv: { plan: 'business', billing: 'yearly' },
 };
 
 export default async function handler(req, res) {
