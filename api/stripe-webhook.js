@@ -145,6 +145,57 @@ export default async function handler(req, res) {
         break;
       }
 
+      // 👇このブロックを新しく追加する  
+　　　 case 'invoice.payment_succeeded': {
+        const invoice = event.data.object;
+
+        const subscriptionId = invoice.subscription;
+        const customerId = invoice.customer;
+
+        // サブスク情報（プラン判定用）を取得
+        let subscription = null;
+        if (subscriptionId) {
+          subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        }
+
+        const priceId =
+          subscription?.items?.data?.[0]?.price?.id ||
+          invoice.lines?.data?.[0]?.price?.id;
+
+        const planInfo = PRICE_TO_PLAN[priceId] || {
+          plan: 'unknown',
+          billing: 'unknown',
+        };
+
+        // email を取得（invoice 経由 → それでも無ければ customer 経由）
+        let customerEmail =
+          invoice.customer_email || invoice.receipt_email || '';
+
+        if (!customerEmail && customerId) {
+          const customer = await stripe.customers.retrieve(customerId);
+          customerEmail = customer.email || '';
+        }
+
+        const payloadForSheet = {
+          email: customerEmail,
+          plan: `${planInfo.plan}_${planInfo.billing}`,
+          status: subscription?.status || invoice.status || 'unknown',
+          stripe_customer_id: customerId || '',
+          stripe_subscription_id: subscriptionId || '',
+          period_start: subscription?.current_period_start || '',
+          period_end: subscription?.current_period_end || '',
+          updated_at: new Date().toISOString(),
+        };
+
+        console.log(
+          '➡️ Send payload to sheet (invoice.payment_succeeded):',
+          payloadForSheet
+        );
+        await updateSheet(payloadForSheet);
+        break;
+      }
+      // 👆ここまで追加ブロック
+        
       // サブスク更新系
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
