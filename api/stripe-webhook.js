@@ -1,49 +1,68 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+// api/stripe-webhook.js あるいは .ts でもOK（型を使わない形）
 
 const GAS_WEB_APP_URL = process.env.GAS_WEB_APP_URL || '';
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).end('Method Not Allowed');
   }
 
   try {
-    const event = req.body as any;
-    const type = event?.type || '';
-    const obj = event?.data?.object || {};
+    const event = req.body || {};
+    const type = event.type || '';
+    const obj = (event.data && event.data.object) || {};
 
     // できるだけ多くのパターンから email を拾う
     const customerEmail =
-      obj?.customer_details?.email ||                       // checkout.session.completed
-      obj?.customer_email ||                               // 一部のイベント
-      obj?.receipt_email ||                                // charge.succeeded など
-      obj?.billing_details?.email ||                       // 単一 charge
-      obj?.charges?.data?.[0]?.billing_details?.email ||   // payment_intent.succeeded
-      obj?.charges?.data?.[0]?.receipt_email ||            // こちらにも入ることあり
+      (obj.customer_details && obj.customer_details.email) ||
+      obj.customer_email ||
+      obj.receipt_email ||
+      (obj.billing_details && obj.billing_details.email) ||
+      (obj.charges &&
+        obj.charges.data &&
+        obj.charges.data[0] &&
+        obj.charges.data[0].billing_details &&
+        obj.charges.data[0].billing_details.email) ||
+      (obj.charges &&
+        obj.charges.data &&
+        obj.charges.data[0] &&
+        obj.charges.data[0].receipt_email) ||
       '';
 
     const customerName =
-      obj?.customer_details?.name ||
-      obj?.billing_details?.name ||
-      obj?.charges?.data?.[0]?.billing_details?.name ||
+      (obj.customer_details && obj.customer_details.name) ||
+      (obj.billing_details && obj.billing_details.name) ||
+      (obj.charges &&
+        obj.charges.data &&
+        obj.charges.data[0] &&
+        obj.charges.data[0].billing_details &&
+        obj.charges.data[0].billing_details.name) ||
       '';
 
     const status =
-      obj?.status ||
-      obj?.payment_status ||
-      obj?.subscription_status ||
+      obj.status ||
+      obj.payment_status ||
+      obj.subscription_status ||
       '';
 
     const priceId =
-      obj?.metadata?.price_id ||
-      obj?.price?.id ||
-      obj?.lines?.data?.[0]?.price?.id ||
+      (obj.metadata && obj.metadata.price_id) ||
+      (obj.price && obj.price.id) ||
+      (obj.lines &&
+        obj.lines.data &&
+        obj.lines.data[0] &&
+        obj.lines.data[0].price &&
+        obj.lines.data[0].price.id) ||
       '';
 
     const planName =
-      obj?.metadata?.plan_name ||
-      obj?.lines?.data?.[0]?.price?.nickname ||
+      (obj.metadata && obj.metadata.plan_name) ||
+      (obj.lines &&
+        obj.lines.data &&
+        obj.lines.data[0] &&
+        obj.lines.data[0].price &&
+        obj.lines.data[0].price.nickname) ||
       '残業Free ご利用プラン';
 
     const payload = {
@@ -57,6 +76,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log('Payload to GAS:', payload);
 
+    if (!GAS_WEB_APP_URL) {
+      throw new Error('GAS_WEB_APP_URL is not set');
+    }
+
     const response = await fetch(GAS_WEB_APP_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -67,13 +90,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('Sheets WebApp response:', response.status, text);
 
     if (!response.ok) {
-      return res.status(500).json({ ok: false, error: 'GAS error', detail: text });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'GAS error', detail: text });
     }
 
     return res.status(200).json({ ok: true });
-  } catch (err: any) {
+  } catch (err) {
     console.error('Webhook handler error:', err);
-    return res.status(500).json({ ok: false, error: err.message || String(err) });
+    return res
+      .status(500)
+      .json({ ok: false, error: err.message || String(err) });
   }
 }
 
